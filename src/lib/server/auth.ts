@@ -13,6 +13,7 @@ import { db } from './db';
 import { svelteCookies } from './auth-svelte-cookies';
 
 export const auth = betterAuth({
+	baseURL: BETTER_AUTH_URL,
 	secret: BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, {
 		provider: 'sqlite'
