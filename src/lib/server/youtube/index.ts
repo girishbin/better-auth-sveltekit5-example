@@ -1,0 +1,79 @@
+import { google, youtube_v3 } from 'googleapis';
+import { getAccount } from '$lib/server/db';
+import { env } from '$env/dynamic/private';
+
+/**
+ * Creates an authenticated YouTube API client for a given user.
+ * It fetches the user's tokens from the database and handles token refresh if necessary.
+ *
+ * @param userId The ID of the user to authenticate as.
+ * @returns A promise that resolves to an authenticated YouTube API v3 client instance.
+ * @throws An error if the user's account or tokens are not found.
+ */
+export async function getYouTubeClient(userId: string): Promise<youtube_v3.Youtube> {
+	// 1. Fetch user's account details from the database
+	const account = await getAccount(userId, 'google');
+
+	if (!account?.accessToken) {
+		throw new Error(`Could not find access token for user ${userId}.`);
+	}
+
+	// 2. Create an OAuth2 client
+	const oauth2Client = new google.auth.OAuth2(
+		env.GOOGLE_CLIENT_ID,
+		env.GOOGLE_CLIENT_SECRET,
+		env.GOOGLE_REDIRECT_URI
+	);
+
+	// 3. Set the credentials on the OAuth2 client
+	oauth2Client.setCredentials({
+		access_token: account.accessToken,
+		refresh_token: account.refreshToken
+	});
+
+	// Note: The googleapis library automatically handles token refreshing.
+	// If the access token is expired, it will use the refresh token to get a new one
+	// before making the API request. You can also listen for the 'tokens' event
+	// on the oauth2Client to save the new tokens to your database.
+
+	// 4. Return an initialized YouTube client
+	return google.youtube({ version: 'v3', auth: oauth2Client });
+}
+
+/**
+ * Fetches all playlists for the specified user (including private playlists).
+ *
+ * @param userId The ID of the user whose playlists are to be fetched.
+ * @returns A promise that resolves to an array of the user's playlist items.
+ */
+export async function getUserPlaylists(userId: string): Promise<youtube_v3.Schema$Playlist[]> {
+	try {
+		const youtube = await getYouTubeClient(userId);
+		const playlists: youtube_v3.Schema$Playlist[] = [];
+		let nextPageToken: string | undefined | null = undefined;
+
+		console.log(`Fetching playlists for user ${userId}...`);
+
+		do {
+			const response = await youtube.playlists.list({
+				mine: true,
+				part: ['snippet', 'contentDetails', 'status'],
+				maxResults: 50,
+				pageToken: nextPageToken || undefined
+			});
+
+			if (response.data.items) {
+				playlists.push(...response.data.items);
+			}
+
+			nextPageToken = response.data.nextPageToken;
+		} while (nextPageToken);
+
+		console.log(`Found ${playlists.length} playlists for user ${userId}.`);
+		return playlists;
+	} catch (error) {
+		console.error(`Failed to fetch playlists for user ${userId}:`, error);
+		// Re-throw the error to be handled by the calling function (e.g., in a SvelteKit endpoint)
+		throw error;
+	}
+}
