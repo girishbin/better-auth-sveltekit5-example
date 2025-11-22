@@ -9,14 +9,15 @@ export const POST: RequestHandler = async ({ request }) => {
 	});
 
 	if (!session?.user) {
-		return json({ error: 'Unauthorized' }, { status: 401 });
+		return new Response('Unauthorized', { status: 401 });
 	}
 
 	try {
-		const data = await syncUserPlaylists(session.user.id);
-		return json({ playlists: data });
+		const { existingEtags } = await request.json().catch(() => ({ existingEtags: {} }));
+		const result = await syncUserPlaylists(session.user.id, existingEtags || {});
+		return json(result);
 	} catch (error) {
-		console.error('Error syncing YouTube playlists:', error);
-		return json({ error: 'Failed to sync playlists' }, { status: 500 });
+		console.error('Error syncing playlists:', error);
+		return new Response('Internal Server Error', { status: 500 });
 	}
 };

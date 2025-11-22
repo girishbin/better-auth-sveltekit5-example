@@ -125,56 +125,58 @@ export async function getPlaylistItems(
  * @param userId The ID of the user.
  * @returns A promise that resolves to an array of playlists with their items.
  */
-export async function syncUserPlaylists(userId: string) {
+/**
+ * Fetches all playlists and their items for a user, optimizing by skipping unchanged playlists.
+ *
+ * @param userId The ID of the user.
+ * @param existingEtags A map of playlist IDs to their last known ETags.
+ * @returns An object containing updated playlists and a list of unchanged playlist IDs.
+ */
+export async function syncUserPlaylists(userId: string, existingEtags: Record<string, string> = {}) {
 	const youtube = await getYouTubeClient(userId);
 	const playlists = await getUserPlaylists(userId);
 
-	// Fetch user's channel to get "Watch Later" playlist ID
-	try {
-		const channelResponse = await youtube.channels.list({
-			mine: true,
-			part: ['contentDetails']
-		});
-		console.log('Channel Response:', JSON.stringify(channelResponse.data, null, 2));
-		const relatedPlaylists = channelResponse.data.items?.[0]?.contentDetails?.relatedPlaylists;
-		console.log('Related Playlists:', relatedPlaylists);
-		
-		let watchLaterId = relatedPlaylists?.watchLater;
-
-		// Fallback to 'WL' if not found (common for newer API behavior)
-		if (!watchLaterId) {
-			console.log('Watch Later ID not found in channel details, using fallback "WL"');
-			watchLaterId = 'WL';
+	// Manually add "Watch Later" playlist to the list so it appears in the dropdown.
+	// We won't fetch items for it as it's not supported by the API.
+	playlists.push({
+		id: 'WL',
+		etag: 'static-watch-later',
+		snippet: {
+			title: 'Watch Later',
+			description: 'Your Watch Later list',
+			channelTitle: 'You'
 		}
+	});
 
-		if (watchLaterId) {
-			console.log(`Found Watch Later playlist ID: ${watchLaterId}`);
-			// Manually create a playlist object for Watch Later
-			const watchLaterPlaylist: youtube_v3.Schema$Playlist = {
-				id: watchLaterId,
-				snippet: {
-					title: 'Watch Later',
-					description: 'Your Watch Later list',
-					channelTitle: 'You'
-				}
-			};
-			playlists.push(watchLaterPlaylist);
-		}
-	} catch (error) {
-		console.error('Failed to fetch channel details for Watch Later playlist:', error);
-	}
+	const updated: (youtube_v3.Schema$Playlist & { items: youtube_v3.Schema$PlaylistItem[] })[] = [];
+	const unchanged: string[] = [];
 
-	const playlistsWithItems = await Promise.all(
+	await Promise.all(
 		playlists.map(async (playlist) => {
-			if (!playlist.id) return { ...playlist, items: [] };
+			if (!playlist.id) return;
+
+			// Skip fetching items for Watch Later
+			if (playlist.id === 'WL') {
+				// Always add it to updated so it gets saved/merged on client
+				updated.push({ ...playlist, items: [] });
+				return;
+			}
+
+			// Check if ETag matches
+			if (playlist.etag && existingEtags[playlist.id] === playlist.etag) {
+				unchanged.push(playlist.id);
+				return;
+			}
+
 			try {
 				const items = await getPlaylistItems(userId, playlist.id);
-				return { ...playlist, items };
+				updated.push({ ...playlist, items });
 			} catch (error) {
 				console.error(`Failed to fetch items for playlist ${playlist.id}, skipping items.`, error);
-				return { ...playlist, items: [] };
+				updated.push({ ...playlist, items: [] });
 			}
 		})
 	);
-	return playlistsWithItems;
+
+	return { updated, unchanged };
 }

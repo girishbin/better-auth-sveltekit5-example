@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { toast } from 'svelte-sonner';
 	import { authClient } from '$lib/client';
 	import * as Card from '$lib/components/ui/card';
 	import * as Avatar from '$lib/components/ui/avatar';
@@ -83,22 +84,59 @@
 
 	async function syncPlaylists() {
 		isSyncing = true;
-		try {
+		
+		const promise = (async () => {
+			// Prepare existing ETags map
+			const existingEtags = playlists.reduce((acc, playlist) => {
+				if (playlist.id && playlist.etag) {
+					acc[playlist.id] = playlist.etag;
+				}
+				return acc;
+			}, {} as Record<string, string>);
+
 			const response = await fetch('/api/sync-youtube', {
-				method: 'POST'
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({ existingEtags })
 			});
-			if (response.ok) {
-				const data = await response.json();
-				playlists = data.playlists;
-				localStorage.setItem('youtubePlaylists', JSON.stringify(playlists));
-				alert('Sync complete!');
-			} else {
-				console.error('Failed to sync playlists');
-				alert('Failed to sync playlists');
+
+			if (!response.ok) {
+				throw new Error('Failed to sync playlists');
 			}
+
+			const { updated, unchanged } = await response.json();
+			
+			// Merge results
+			const newPlaylistsMap = new Map();
+			
+			// Add updated playlists
+			updated.forEach((p: any) => newPlaylistsMap.set(p.id, p));
+			
+			// Add unchanged playlists from local state
+			unchanged.forEach((id: string) => {
+				const existing = playlists.find(p => p.id === id);
+				if (existing) {
+					newPlaylistsMap.set(id, existing);
+				}
+			});
+
+			playlists = Array.from(newPlaylistsMap.values());
+			localStorage.setItem('youtubePlaylists', JSON.stringify(playlists));
+			return updated.length;
+		})();
+
+		toast.promise(promise, {
+			loading: 'Syncing playlists...',
+			success: (count) => `Sync complete! Updated ${count} playlists.`,
+			error: 'Failed to sync playlists'
+		});
+
+		try {
+			await promise;
 		} catch (error) {
 			console.error('Error syncing playlists:', error);
-			alert('Error syncing playlists');
 		} finally {
 			isSyncing = false;
 		}
@@ -122,6 +160,14 @@
 	let sortedPlaylists = $derived.by(() => {
 		return [...playlists].sort((a, b) => a.snippet.title.localeCompare(b.snippet.title));
 	});
+	$effect(() => {
+		if (selectedPlaylistId !== 'all') {
+			const playlist = playlists.find(p => p.id === selectedPlaylistId);
+			if (playlist?.snippet?.title === 'Watch Later') {
+				toast.info('Note: Syncing the "Watch Later" playlist is not supported by the YouTube API.');
+			}
+		}
+	});
 </script>
 
 <Sidebar.Provider>
@@ -139,8 +185,8 @@
 			</div>
 
 			<div class="space-y-4">
-				<div class="flex w-full max-w-3xl items-center gap-2">
-					<div class="w-1/4 min-w-[200px]">
+				<div class="flex w-full max-w-3xl flex-col gap-4 md:flex-row md:items-center md:gap-2">
+					<div class="w-full md:w-1/4 md:min-w-[200px]">
 						<select
 							class="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
 							bind:value={selectedPlaylistId}
@@ -151,7 +197,7 @@
 							{/each}
 						</select>
 					</div>
-					<div class="flex-1">
+					<div class="w-full md:flex-1">
 						<Input type="text" placeholder="Search videos..." bind:value={searchQuery} />
 					</div>
 					<div class="flex items-center space-x-2">
@@ -164,7 +210,7 @@
 					</div>
 				</div>
 
-				<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+				<div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
 					{#each filteredVideos as video}
 						<Card.Root>
 							<Card.Header>
@@ -230,7 +276,8 @@
 						</Card.Root>
 					{/each}
 				</div>
-				{#if filteredVideos.length === 0 && allVideos.length > 0}
+
+				{#if filteredVideos.length === 0 && allVideos.length > 0 && !(selectedPlaylistId !== 'all' && playlists.find(p => p.id === selectedPlaylistId)?.snippet?.title === 'Watch Later')}
 					<p class="text-muted-foreground">No videos found matching your search.</p>
 				{/if}
 				{#if allVideos.length === 0}
