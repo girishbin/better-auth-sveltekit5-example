@@ -77,3 +77,104 @@ export async function getUserPlaylists(userId: string): Promise<youtube_v3.Schem
 		throw error;
 	}
 }
+
+/**
+ * Fetches all items (videos) for a specific playlist.
+ *
+ * @param userId The ID of the user.
+ * @param playlistId The ID of the playlist to fetch items for.
+ * @returns A promise that resolves to an array of playlist items.
+ */
+export async function getPlaylistItems(
+	userId: string,
+	playlistId: string
+): Promise<youtube_v3.Schema$PlaylistItem[]> {
+	try {
+		const youtube = await getYouTubeClient(userId);
+		const playlistItems: youtube_v3.Schema$PlaylistItem[] = [];
+		let nextPageToken: string | undefined | null = undefined;
+
+		console.log(`Fetching items for playlist ${playlistId}...`);
+
+		do {
+			const response = await youtube.playlistItems.list({
+				playlistId: playlistId,
+				part: ['snippet', 'contentDetails', 'status'],
+				maxResults: 50,
+				pageToken: nextPageToken || undefined
+			});
+
+			if (response.data.items) {
+				playlistItems.push(...response.data.items);
+			}
+
+			nextPageToken = response.data.nextPageToken;
+		} while (nextPageToken);
+
+		console.log(`Found ${playlistItems.length} items for playlist ${playlistId}.`);
+		return playlistItems;
+	} catch (error) {
+		console.error(`Failed to fetch items for playlist ${playlistId}:`, error);
+		throw error;
+	}
+}
+
+/**
+ * Fetches all playlists and their items for a user.
+ *
+ * @param userId The ID of the user.
+ * @returns A promise that resolves to an array of playlists with their items.
+ */
+export async function syncUserPlaylists(userId: string) {
+	const youtube = await getYouTubeClient(userId);
+	const playlists = await getUserPlaylists(userId);
+
+	// Fetch user's channel to get "Watch Later" playlist ID
+	try {
+		const channelResponse = await youtube.channels.list({
+			mine: true,
+			part: ['contentDetails']
+		});
+		console.log('Channel Response:', JSON.stringify(channelResponse.data, null, 2));
+		const relatedPlaylists = channelResponse.data.items?.[0]?.contentDetails?.relatedPlaylists;
+		console.log('Related Playlists:', relatedPlaylists);
+		
+		let watchLaterId = relatedPlaylists?.watchLater;
+
+		// Fallback to 'WL' if not found (common for newer API behavior)
+		if (!watchLaterId) {
+			console.log('Watch Later ID not found in channel details, using fallback "WL"');
+			watchLaterId = 'WL';
+		}
+
+		if (watchLaterId) {
+			console.log(`Found Watch Later playlist ID: ${watchLaterId}`);
+			// Manually create a playlist object for Watch Later
+			const watchLaterPlaylist: youtube_v3.Schema$Playlist = {
+				id: watchLaterId,
+				snippet: {
+					title: 'Watch Later',
+					description: 'Your Watch Later list',
+					channelTitle: 'You'
+				}
+			};
+			playlists.push(watchLaterPlaylist);
+		}
+	} catch (error) {
+		console.error('Failed to fetch channel details for Watch Later playlist:', error);
+	}
+
+	const playlistsWithItems = await Promise.all(
+		playlists.map(async (playlist) => {
+			if (!playlist.id) return { ...playlist, items: [] };
+			try {
+				const items = await getPlaylistItems(userId, playlist.id);
+				return { ...playlist, items };
+			} catch (error) {
+				console.error(`Failed to fetch items for playlist ${playlist.id}, skipping items.`, error);
+				return { ...playlist, items: [] };
+			}
+		})
+	);
+	return playlistsWithItems;
+}

@@ -14,24 +14,9 @@
    icon: HouseIcon,
   },
   {
-   title: "Entry",
+   title: "Recently added",
    url: "/entry",
    icon: InboxIcon,
-  },
-  {
-   title: "Reports",
-   url: "/reports",
-   icon: CalendarIcon,
-  },
-  {
-   title: "Analysis",
-   url: "/analysis",
-   icon: CalendarIcon,
-  },
-  {
-   title: "Activity",
-   url: "/activity",
-   icon: Activity,
   },
   {
    title: "Settings",

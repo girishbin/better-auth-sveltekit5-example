@@ -23,7 +23,8 @@ export const auth = betterAuth({
 	socialProviders: {
 		google: {
 			clientId: GOOGLE_CLIENT_ID,
-			clientSecret: GOOGLE_CLIENT_SECRET
+			clientSecret: GOOGLE_CLIENT_SECRET,
+			scope: ['https://www.googleapis.com/auth/youtube.readonly']
 		}
 	},
 	emailAndPassword: {
